@@ -1,0 +1,174 @@
+-- High Level Sales Analysis
+SELECT 
+    (SELECT SUM(qty) FROM balanced_tree.sales) AS total_quantity_sold,
+    (SELECT SUM(qty * price) FROM balanced_tree.sales) AS total_revenue_before_discount,
+    (SELECT SUM(discount) FROM balanced_tree.sales) AS total_discount_amount;
+
+
+
+
+-- Transaction Analysis
+SELECT 
+    (SELECT COUNT(DISTINCT txn_id) FROM balanced_tree.sales) AS unique_transactions,
+    (SELECT AVG(cnt) FROM (SELECT txn_id, COUNT(DISTINCT prod_id) AS cnt FROM balanced_tree.sales GROUP BY txn_id) AS t) AS avg_unique_products_per_transaction,
+    (SELECT PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY qty * price) FROM balanced_tree.sales) AS percentile_25,
+    (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY qty * price) FROM balanced_tree.sales) AS percentile_50,
+    (SELECT PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY qty * price) FROM balanced_tree.sales) AS percentile_75,
+    (SELECT AVG(discount) FROM balanced_tree.sales) AS avg_discount_per_transaction,
+    (SELECT 
+         SUM(CASE WHEN member THEN 1 ELSE 0 END) AS member_transactions
+     FROM balanced_tree.sales) AS member_transactions,
+    (SELECT 
+         SUM(CASE WHEN NOT member THEN 1 ELSE 0 END) AS non_member_transactions
+     FROM balanced_tree.sales) AS non_member_transactions,
+    (SELECT 
+         AVG(CASE WHEN member THEN qty * price END) AS avg_revenue_member_transactions
+     FROM balanced_tree.sales) AS avg_revenue_member_transactions,
+    (SELECT 
+         AVG(CASE WHEN NOT member THEN qty * price END) AS avg_revenue_non_member_transactions
+     FROM balanced_tree.sales) AS avg_revenue_non_member_transactions;
+
+
+
+
+
+
+
+-- Product Analysis
+
+-- Top 3 products by total revenue before discount
+SELECT prod_id 
+FROM (
+    SELECT prod_id, SUM(qty * price) AS total_revenue_before_discount 
+    FROM balanced_tree.sales 
+    GROUP BY prod_id 
+    ORDER BY total_revenue_before_discount DESC 
+    LIMIT 3
+) AS t1;
+
+-- Total quantity, revenue, and discount for each segment
+SELECT 
+    h.level_text AS segment_name,
+    SUM(s.qty) AS total_quantity,
+    SUM(s.qty * s.price) AS total_revenue,
+    SUM(s.discount) AS total_discount
+FROM balanced_tree.sales s
+JOIN balanced_tree.product_details pd ON s.prod_id = pd.product_id
+JOIN balanced_tree.product_hierarchy h ON pd.segment_id = h.id
+WHERE h.level_name = 'Segment'
+GROUP BY h.level_text, pd.segment_id;
+
+
+-- Top selling product for each segment
+SELECT 
+    segment_name,
+    top_selling_product
+FROM (
+    SELECT 
+        h.level_text AS segment_name,
+        s.prod_id AS top_selling_product,
+        RANK() OVER(PARTITION BY pd.segment_id ORDER BY SUM(s.qty) DESC) AS segment_rank
+    FROM balanced_tree.sales s
+    JOIN balanced_tree.product_details pd ON s.prod_id = pd.product_id
+    JOIN balanced_tree.product_hierarchy h ON pd.segment_id = h.id
+    WHERE h.level_name = 'Segment'
+    GROUP BY h.level_text, pd.segment_id, s.prod_id
+) AS t
+WHERE segment_rank = 1;
+
+
+-- Total quantity, revenue, and discount for each category
+SELECT 
+    h.level_text AS category_name,
+    SUM(s.qty) AS total_quantity,
+    SUM(s.qty * s.price) AS total_revenue,
+    SUM(s.discount) AS total_discount
+FROM balanced_tree.sales s
+JOIN balanced_tree.product_details pd ON s.prod_id = pd.product_id
+JOIN balanced_tree.product_hierarchy h ON pd.category_id = h.id
+WHERE h.level_name = 'Category'
+GROUP BY h.level_text, pd.category_id;
+
+
+-- Top selling product for each category
+SELECT 
+    category_name,
+    top_selling_product
+FROM (
+    SELECT 
+        h.level_text AS category_name,
+        s.prod_id AS top_selling_product,
+        RANK() OVER(PARTITION BY pd.category_id ORDER BY SUM(s.qty) DESC) AS category_rank
+    FROM balanced_tree.sales s
+    JOIN balanced_tree.product_details pd ON s.prod_id = pd.product_id
+    JOIN balanced_tree.product_hierarchy h ON pd.category_id = h.id
+    WHERE h.level_name = 'Category'
+    GROUP BY h.level_text, pd.category_id, s.prod_id
+) AS t
+WHERE category_rank = 1;
+
+
+-- Percentage split of revenue by product for each segment
+SELECT 
+    h.level_text AS segment_name,
+    s.prod_id,
+    (SUM(s.qty * s.price) / (SELECT SUM(qty * price) FROM balanced_tree.sales)) AS revenue_percentage
+FROM balanced_tree.sales s
+JOIN balanced_tree.product_details pd ON s.prod_id = pd.product_id
+JOIN balanced_tree.product_hierarchy h ON pd.segment_id = h.id
+WHERE h.level_name = 'Segment'
+GROUP BY h.level_text, pd.segment_id, s.prod_id;
+
+
+-- Percentage split of revenue by segment for each category
+SELECT 
+    h_cat.level_text AS category_name,
+    h_seg.level_text AS segment_name,
+    (SUM(s.qty * s.price) / (SELECT SUM(qty * price) FROM balanced_tree.sales)) AS revenue_percentage
+FROM balanced_tree.sales s
+JOIN balanced_tree.product_details pd ON s.prod_id = pd.product_id
+JOIN balanced_tree.product_hierarchy h_seg ON pd.segment_id = h_seg.id
+JOIN balanced_tree.product_hierarchy h_cat ON pd.category_id = h_cat.id
+WHERE h_cat.level_name = 'Category' AND h_seg.level_name = 'Segment'
+GROUP BY h_cat.level_text, h_seg.level_text;
+
+
+-- Percentage split of total revenue by category
+SELECT 
+    h.level_text AS category_name,
+    (SUM(s.qty * s.price) / (SELECT SUM(qty * price) FROM balanced_tree.sales)) AS revenue_percentage
+FROM balanced_tree.sales s
+JOIN balanced_tree.product_details pd ON s.prod_id = pd.product_id
+JOIN balanced_tree.product_hierarchy h ON pd.category_id = h.id
+WHERE h.level_name = 'Category'
+GROUP BY h.level_text;
+
+
+-- Total transaction “penetration” for each product
+SELECT 
+    prod_id,
+    COUNT(DISTINCT txn_id) * 1.0 / (SELECT COUNT(DISTINCT txn_id) FROM balanced_tree.sales) AS penetration
+FROM balanced_tree.sales
+GROUP BY prod_id;
+
+
+-- Most common combination of at least 1 quantity of any 3 products in a single transaction
+SELECT 
+    prod_1,
+    prod_2,
+    prod_3,
+    COUNT(*) AS frequency
+FROM (
+    SELECT 
+        s1.prod_id AS prod_1,
+        s2.prod_id AS prod_2,
+        s3.prod_id AS prod_3
+    FROM balanced_tree.sales s1
+    JOIN balanced_tree.sales s2 ON s1.txn_id = s2.txn_id
+    JOIN balanced_tree.sales s3 ON s1.txn_id = s3.txn_id
+    WHERE s1.prod_id < s2.prod_id
+    AND s2.prod_id < s3.prod_id
+) AS t
+GROUP BY prod_1, prod_2, prod_3
+ORDER BY frequency DESC
+LIMIT 1;
