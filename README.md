@@ -27,9 +27,6 @@ In this project, I conducted a comprehensive analysis of the product hierarchy a
 
 4. Insights Generation
 
-
-📊 LinkedIn Post Link : 
-
 #### Case Study Questions
 
 *High Level Sales Analysis*
